@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  backend:
+    build: ./backend
+    container_name: monitor_backend
+    restart: always
+    volumes:
+      - ./backend/data:/app/data
+    environment:
+      - DATABASE_URL=sqlite:////app/data/sql_app.db
+      - SECRET_KEY=${SECRET_KEY:-your_random_secret_here}
+      - ADMIN_USERNAME=${ADMIN_USERNAME:-admin_temp}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-pass_temp}
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+
+  frontend:
+    build: ./frontend
+    container_name: monitor_frontend
+    restart: always
+    ports:
+      - "${FRONTEND_PORT:-80}:80"
+    depends_on:
+      - backend
