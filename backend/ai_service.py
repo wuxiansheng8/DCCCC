@@ -60,8 +60,29 @@ async def request_chinese_translation(
             )
         if response.status_code != 200:
             return None, f"AI request returned HTTP {response.status_code}", response.status_code
-        data = response.json()
-        content = data.get("choices", [{}])[0].get("message", {}).get("content")
+        
+        response_text = response.text.strip()
+        content_type = response.headers.get("content-type", "")
+        
+        if "text/event-stream" in content_type or response_text.startswith("data:"):
+            full_content = []
+            for line in response_text.splitlines():
+                line = line.strip()
+                if not line.startswith("data:") or line == "data: [DONE]":
+                    continue
+                try:
+                    import json
+                    chunk = json.loads(line[5:].strip())
+                    delta = chunk.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                    if delta:
+                        full_content.append(delta)
+                except Exception:
+                    continue
+            content = "".join(full_content)
+        else:
+            data = response.json()
+            content = data.get("choices", [{}])[0].get("message", {}).get("content")
+            
         if not content:
             return None, "AI response did not contain content", None
         return content.strip(), None, None
