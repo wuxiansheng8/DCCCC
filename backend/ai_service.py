@@ -65,6 +65,16 @@ async def request_chinese_translation(
         content_type = response.headers.get("content-type", "")
         
         if "text/event-stream" in content_type or response_text.startswith("data:"):
+            if not response_text.startswith("data:"):
+                try:
+                    import json
+                    data = json.loads(response_text)
+                    if "error" in data:
+                        error_msg = data.get("error", {}).get("message") or "Unknown API error"
+                        return None, f"AI request failed: {error_msg}", None
+                except Exception:
+                    pass
+
             full_content = []
             for line in response_text.splitlines():
                 line = line.strip()
@@ -73,6 +83,10 @@ async def request_chinese_translation(
                 try:
                     import json
                     chunk = json.loads(line[5:].strip())
+                    if "error" in chunk:
+                        error_msg = chunk.get("error", {}).get("message")
+                        if error_msg:
+                            return None, f"AI request failed: {error_msg}", None
                     delta = chunk.get("choices", [{}])[0].get("delta", {}).get("content", "")
                     if delta:
                         full_content.append(delta)
@@ -81,6 +95,9 @@ async def request_chinese_translation(
             content = "".join(full_content)
         else:
             data = response.json()
+            if "error" in data:
+                error_msg = data.get("error", {}).get("message") or "Unknown API error"
+                return None, f"AI request failed: {error_msg}", None
             content = data.get("choices", [{}])[0].get("message", {}).get("content")
             
         if not content:
