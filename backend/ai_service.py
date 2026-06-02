@@ -62,16 +62,25 @@ async def request_chinese_translation(
             return None, f"AI request returned HTTP {response.status_code}", response.status_code
         
         response_text = response.text.strip()
-        content_type = response.headers.get("content-type", "")
+        content_type = response.headers.get("content-type", "").lower()
         
-        if "text/event-stream" in content_type or response_text.startswith("data:"):
+        # 针对不规范中转 API（如 SkyBridge）的兼容处理：
+        # 只要响应正文是以 "{" 或 "[" 开头，说明是标准的普通 JSON（不可能是 SSE 流），不按流式解析
+        looks_like_json = response_text.startswith(("{", "["))
+        is_stream = response_text.startswith("data:") or (
+            "text/event-stream" in content_type and not looks_like_json
+        )
+        
+        if is_stream:
             if not response_text.startswith("data:"):
                 try:
                     import json
                     data = json.loads(response_text)
-                    if "error" in data:
-                        error_msg = data.get("error", {}).get("message") or "Unknown API error"
-                        return None, f"AI request failed: {error_msg}", None
+                    if isinstance(data, dict):
+                        if "error" in data:
+                            error_obj = data.get("error")
+                            error_msg = error_obj.get("message") if isinstance(error_obj, dict) else str(error_obj)
+                            return None, f"AI request failed: {error_msg or 'Unknown API error'}", None
                 except Exception:
                     pass
 
@@ -83,22 +92,72 @@ async def request_chinese_translation(
                 try:
                     import json
                     chunk = json.loads(line[5:].strip())
-                    if "error" in chunk:
-                        error_msg = chunk.get("error", {}).get("message")
-                        if error_msg:
-                            return None, f"AI request failed: {error_msg}", None
-                    delta = chunk.get("choices", [{}])[0].get("delta", {}).get("content", "")
-                    if delta:
-                        full_content.append(delta)
+                    if isinstance(chunk, dict):
+                        if "error" in chunk:
+                            error_obj = chunk.get("error")
+                            error_msg = error_obj.get("message") if isinstance(error_obj, dict) else str(error_obj)
+                            if error_msg:
+                                return None, f"AI request failed: {error_msg}", None
+                        choices = chunk.get("choices")
+                        if isinstance(choices, list) and len(choices) > 0:
+                            delta = choices[0].get("delta", {})
+                            if isinstance(delta, dict):
+                                delta_content = delta.get("content", "")
+                                if delta_content:
+                                    full_content.append(delta_content)
                 except Exception:
                     continue
             content = "".join(full_content)
         else:
-            data = response.json()
+            try:
+                data = response.json()
+            except Exception as exc:
+                return None, f"Failed to parse JSON response: {exc} | Raw response: {response.text[:200]}", None
+                
+            # 强制检查 data 类型，防止后续 choices = data.get("choices") 对字符串/列表调用 get 报错
+            if not isinstance(data, dict):
+                return None, f"AI request returned unknown format: {response.text[:300]}", None
+                
             if "error" in data:
-                error_msg = data.get("error", {}).get("message") or "Unknown API error"
-                return None, f"AI request failed: {error_msg}", None
-            content = data.get("choices", [{}])[0].get("message", {}).get("content")
+                error_obj = data.get("error")
+                error_msg = error_obj.get("message") if isinstance(error_obj, dict) else str(error_obj)
+                return None, f"AI request failed: {error_msg or 'Unknown API error'}", None
+                
+            choices = data.get("choices")
+            raw_content = ""
+            if isinstance(choices, list) and len(choices) > 0:
+                first_choice = choices[0]
+                if isinstance(first_choice, dict):
+                    # 优先匹配主流 Chat 格式
+                    message = first_choice.get("message")
+                    if isinstance(message, dict):
+                        raw_content = message.get("content") or ""
+                    elif isinstance(message, list) and len(message) > 0:
+                        first_msg = message[0]
+                        if isinstance(first_msg, dict):
+                            raw_content = first_msg.get("content") or ""
+                        elif isinstance(first_msg, str):
+                            for item in message:
+                                if isinstance(item, str) and item.startswith("content:"):
+                                    raw_content = item[8:]
+                                    break
+                            else:
+                                try:
+                                    idx = message.index("content")
+                                    if idx + 1 < len(message):
+                                        raw_content = message[idx + 1]
+                                except ValueError:
+                                    pass
+                    
+                    # 兼容旧版本或文本补全接口的 "text" 字段作为兜底
+                    if not raw_content:
+                        raw_content = first_choice.get("text") or ""
+                        
+            elif isinstance(choices, dict):
+                message = choices.get("message")
+                if isinstance(message, dict):
+                    raw_content = message.get("content") or ""
+            content = raw_content
             
         if not content:
             return None, "AI response did not contain content", None
@@ -118,7 +177,14 @@ def is_retryable_ai_error(error: str | None, status_code: int | None) -> bool:
     if not error:
         return False
     error_lower = error.lower()
-    return "timed out" in error_lower or "request failed" in error_lower
+    return (
+        "timed out" in error_lower
+        or "request failed" in error_lower
+        or "failed" in error_lower
+        or "did not contain content" in error_lower
+        or "unknown format" in error_lower
+        or "empty" in error_lower
+    )
 
 
 async def get_api_balance(api_key: str, base_url: str):
