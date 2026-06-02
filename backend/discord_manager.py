@@ -848,23 +848,55 @@ class DiscordMonitor(discord.Client):
                 )
                 return
 
+            message_url = None
+            if message.guild and message.channel:
+                message_url = f"https://discord.com/channels/{message.guild.id}/{message.channel.id}/{message.id}"
+
             try:
                 if image_urls:
-                    success, error = await asyncio.wait_for(
-                        send_telegram_photo(config.tg_bot_token, config.tg_chat_id, image_urls[0], photo_caption),
-                        timeout=FORWARD_SEND_TIMEOUT.total_seconds(),
-                    )
-                    if success:
-                        for image_url in image_urls[1:]:
-                            success, error = await asyncio.wait_for(
-                                send_telegram_photo(config.tg_bot_token, config.tg_chat_id, image_url),
-                                timeout=FORWARD_SEND_TIMEOUT.total_seconds(),
-                            )
-                            if not success:
-                                break
+                    if len(image_urls) == 1:
+                        success, error = await asyncio.wait_for(
+                            send_telegram_photo(
+                                config.tg_bot_token,
+                                config.tg_chat_id,
+                                image_urls[0],
+                                photo_caption,
+                                message_url=message_url,
+                            ),
+                            timeout=FORWARD_SEND_TIMEOUT.total_seconds(),
+                        )
+                    else:
+                        success, error = await asyncio.wait_for(
+                            send_telegram_photo(
+                                config.tg_bot_token,
+                                config.tg_chat_id,
+                                image_urls[0],
+                                photo_caption,
+                            ),
+                            timeout=FORWARD_SEND_TIMEOUT.total_seconds(),
+                        )
+                        if success:
+                            for idx, image_url in enumerate(image_urls[1:], 1):
+                                is_last = (idx == len(image_urls) - 1)
+                                success, error = await asyncio.wait_for(
+                                    send_telegram_photo(
+                                        config.tg_bot_token,
+                                        config.tg_chat_id,
+                                        image_url,
+                                        message_url=message_url if is_last else None,
+                                    ),
+                                    timeout=FORWARD_SEND_TIMEOUT.total_seconds(),
+                                )
+                                if not success:
+                                    break
                 else:
                     success, error = await asyncio.wait_for(
-                        send_telegram_message(config.tg_bot_token, config.tg_chat_id, text),
+                        send_telegram_message(
+                            config.tg_bot_token,
+                            config.tg_chat_id,
+                            text,
+                            message_url=message_url,
+                        ),
                         timeout=FORWARD_SEND_TIMEOUT.total_seconds(),
                     )
             except asyncio.TimeoutError:
