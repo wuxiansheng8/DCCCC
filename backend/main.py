@@ -318,7 +318,8 @@ async def get_ai_balance_by_provider(
 
 async def test_ai_provider(config: models.SystemConfig, provider: str):
     api_key, base_url, model, provider_name = ai_provider_settings(config, provider)
-    if not api_key or not base_url or not model:
+    is_google = is_google_translate_config(api_key, base_url, model)
+    if (not api_key or not base_url or not model) and not is_google:
         raise HTTPException(status_code=400, detail=f"{provider_name} is not configured")
     sample_message = "We should delay the subnet launch until the validator emissions are stable."
     summary, error, _status_code = await request_chinese_translation(
