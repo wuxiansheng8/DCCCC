@@ -53,7 +53,8 @@ const Settings = () => {
       setTgChatId(data.tg_chat_id || '');
       setAiEnabled(Boolean(data.ai_enabled));
       setAiApiKey(data.ai_api_key || '');
-      setAiBaseUrl(data.ai_base_url || 'https://api.deepseek.com');
+      const isGoogleModel = data.ai_model === 'google' || data.ai_model === 'google-translate';
+      setAiBaseUrl(data.ai_base_url === 'https://api.deepseek.com' && isGoogleModel ? '' : (data.ai_base_url || ''));
       setAiModel(data.ai_model || 'deepseek-chat');
       setAiBackupApiKey(data.ai_backup_api_key || '');
       setAiBackupBaseUrl(data.ai_backup_base_url || '');
@@ -277,7 +278,17 @@ const Settings = () => {
             <label style={{ display: 'block', marginBottom: '8px', color: 'var(--text-muted)' }}>模型</label>
             <input
               value={aiModel}
-              onChange={(e) => { setAiModel(e.target.value); setError(''); setMessage(''); }}
+              onChange={(e) => {
+                const newModel = e.target.value;
+                setAiModel(newModel);
+                if ((newModel === 'google' || newModel === 'google-translate') && aiBaseUrl === 'https://api.deepseek.com') {
+                  setAiBaseUrl('');
+                } else if (newModel !== 'google' && newModel !== 'google-translate' && aiBaseUrl === '') {
+                  setAiBaseUrl('https://api.deepseek.com');
+                }
+                setError('');
+                setMessage('');
+              }}
               placeholder="deepseek-chat"
             />
             <p className="muted" style={{ fontSize: '12px', marginTop: '4px' }}>
