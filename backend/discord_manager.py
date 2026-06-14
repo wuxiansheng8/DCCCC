@@ -9,7 +9,7 @@ import discord
 import httpx
 from sqlalchemy.exc import IntegrityError
 
-from ai_service import is_retryable_ai_error, request_chinese_translation
+from ai_service import is_retryable_ai_error, request_chinese_translation, is_google_translate_config
 import models
 from database import SessionLocal
 from maintenance import prune_old_forwarded_messages, prune_old_logs
@@ -335,7 +335,8 @@ async def generate_chinese_summary_with_failover(config: models.SystemConfig, me
 
     if provider == "backup" and has_backup:
         should_check_primary = config.ai_primary_next_check_at is None or config.ai_primary_next_check_at <= now
-        if should_check_primary and config.ai_api_key and config.ai_base_url and config.ai_model:
+        is_google = is_google_translate_config(config.ai_api_key, config.ai_base_url, config.ai_model)
+        if should_check_primary and (config.ai_api_key or is_google) and (config.ai_base_url or is_google) and config.ai_model:
             summary, error, status_code = await request_chinese_translation(
                 config.ai_api_key,
                 config.ai_base_url,
@@ -357,10 +358,11 @@ async def generate_chinese_summary_with_failover(config: models.SystemConfig, me
         )
         return summary, error, "backup", None
 
+    is_google = is_google_translate_config(config.ai_api_key, config.ai_base_url, config.ai_model)
     summary, error, status_code = await request_chinese_translation(
         config.ai_api_key,
-        config.ai_base_url or "https://api.deepseek.com",
-        config.ai_model or "deepseek-chat",
+        config.ai_base_url or ("" if is_google else "https://api.deepseek.com"),
+        config.ai_model or ("google" if is_google else "deepseek-chat"),
         message_text,
     )
     if not error or not has_backup or not is_retryable_ai_error(error, status_code):
@@ -383,13 +385,15 @@ async def run_due_ai_primary_check():
     db = SessionLocal()
     try:
         config = db.query(models.SystemConfig).first()
+        if not config:
+            return
         now = utcnow()
+        is_google = is_google_translate_config(config.ai_api_key, config.ai_base_url, config.ai_model)
         if (
-            not config
-            or config.ai_active_provider != "backup"
+            config.ai_active_provider != "backup"
             or not has_backup_ai_config(config)
-            or not config.ai_api_key
-            or not config.ai_base_url
+            or (not config.ai_api_key and not is_google)
+            or (not config.ai_base_url and not is_google)
             or not config.ai_model
             or (config.ai_primary_next_check_at and config.ai_primary_next_check_at > now)
         ):
@@ -810,7 +814,8 @@ class DiscordMonitor(discord.Client):
             summary = None
             forward_format = config.ai_forward_format or "summary_original"
             if raw_content and config.ai_enabled and forward_format != "original":
-                if config.ai_api_key:
+                is_google = is_google_translate_config(config.ai_api_key, config.ai_base_url, config.ai_model)
+                if config.ai_api_key or is_google:
                     summary, summary_error, _ai_provider, switch_message = await generate_chinese_summary_with_failover(
                         config,
                         raw_content,

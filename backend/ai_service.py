@@ -18,11 +18,28 @@ async def generate_chinese_summary(
     author_name: str,
     channel_name: str,
 ):
-    if not api_key or not base_url or not model or not message_text:
-        return None, "AI configuration or message content is missing"
+    if not message_text:
+        return None, "Message content is missing"
+
+    is_google = is_google_translate_config(api_key, base_url, model)
+    if not is_google:
+        if not api_key or not base_url or not model:
+            return None, "AI configuration is missing"
 
     content, error, _status_code = await request_chinese_translation(api_key, base_url, model, message_text)
     return content, error
+
+
+def is_google_translate_config(api_key: str | None, base_url: str | None, model: str | None) -> bool:
+    model_lower = (model or "").lower()
+    base_url_lower = (base_url or "").lower()
+    api_key_lower = (api_key or "").lower()
+    return (
+        model_lower in {"google", "google-translate"}
+        or api_key_lower == "google"
+        or "google" in base_url_lower
+        or (not api_key and not base_url and not model)
+    )
 
 
 async def request_chinese_translation(
@@ -31,6 +48,59 @@ async def request_chinese_translation(
     model: str,
     message_text: str,
 ):
+    is_google = is_google_translate_config(api_key, base_url, model)
+    
+    if is_google:
+        url = "https://translate.googleapis.com/translate_a/single"
+        
+        # 将长文本按最多 4000 字符分段，尽量在换行符或空格处分割
+        chunks = []
+        text_len = len(message_text)
+        start = 0
+        limit = 4000
+        while start < text_len:
+            if start + limit >= text_len:
+                chunks.append(message_text[start:])
+                break
+            else:
+                end = start + limit
+                search_start = max(start, end - 500)
+                newline_pos = message_text.rfind('\n', search_start, end)
+                if newline_pos != -1:
+                    end = newline_pos + 1
+                else:
+                    space_pos = message_text.rfind(' ', search_start, end)
+                    if space_pos != -1:
+                        end = space_pos + 1
+                chunks.append(message_text[start:end])
+                start = end
+
+        translated_chunks = []
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                for chunk in chunks:
+                    if not chunk.strip():
+                        translated_chunks.append(chunk)
+                        continue
+                    response = await client.get(url, params={
+                        "client": "gtx",
+                        "sl": "auto",
+                        "tl": "zh-CN",
+                        "dt": "t",
+                        "q": chunk
+                    })
+                    if response.status_code == 200:
+                        data = response.json()
+                        translation = "".join([part[0] for part in data[0] if part[0]])
+                        translated_chunks.append(translation)
+                    else:
+                        return None, f"Google Translate returned HTTP {response.status_code}", response.status_code
+            return "".join(translated_chunks).strip(), None, None
+        except httpx.RequestError as exc:
+            return None, f"Google Translate request failed: {exc}", None
+        except Exception as exc:
+            return None, f"Google Translate failed: {exc}", None
+
     prompt = (
         "把下面英文原文直接翻译成中文。\n"
         "只输出译文。\n"
@@ -188,6 +258,20 @@ def is_retryable_ai_error(error: str | None, status_code: int | None) -> bool:
 
 
 async def get_api_balance(api_key: str, base_url: str):
+    is_google = is_google_translate_config(api_key, base_url, "google" if "google" in (base_url or "").lower() else "")
+    if is_google:
+        return {
+            "is_available": True,
+            "balance_infos": [
+                {
+                    "currency": "免费接口(免Key)",
+                    "total_balance": "公共接口",
+                    "granted_balance": "频率受限",
+                    "topped_up_balance": "无限制"
+                }
+            ]
+        }, None
+
     if not api_key or not base_url:
         return None, "AI API Key or Base URL is missing"
 

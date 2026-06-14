@@ -73,8 +73,15 @@ const Settings = () => {
     if (!tgChatId.trim()) return '请输入 Telegram Chat ID';
     if (!/^-?\d+$/.test(tgChatId.trim())) return 'Telegram Chat ID 必须是数字';
     if (aiEnabled) {
-      if (!aiApiKey.trim()) return '启用 AI 翻译后，请输入 OpenAI API Key';
-      if (!/^https?:\/\//.test(aiBaseUrl.trim())) return 'AI Base URL 必须以 http:// 或 https:// 开头';
+      const isGoogle = aiModel.trim() === 'google' || aiModel.trim() === 'google-translate';
+      if (!isGoogle) {
+        if (!aiApiKey.trim()) return '启用 AI 翻译后，请输入 OpenAI API Key';
+        if (!/^https?:\/\//.test(aiBaseUrl.trim())) return 'AI Base URL 必须以 http:// 或 https:// 开头';
+      } else {
+        if (aiBaseUrl.trim() && !/^https?:\/\//.test(aiBaseUrl.trim())) {
+          return 'AI Base URL 必须以 http:// 或 https:// 开头';
+        }
+      }
       if (!aiModel.trim()) return '请输入 AI 模型名称';
       if (aiBackupBaseUrl.trim() && !/^https?:\/\//.test(aiBackupBaseUrl.trim())) {
         return '备用 AI Base URL 必须以 http:// 或 https:// 开头';
@@ -273,6 +280,9 @@ const Settings = () => {
               onChange={(e) => { setAiModel(e.target.value); setError(''); setMessage(''); }}
               placeholder="deepseek-chat"
             />
+            <p className="muted" style={{ fontSize: '12px', marginTop: '4px' }}>
+              输入 <code>google</code> 可使用免费的谷歌翻译接口（此时无需配置 Key 和 Base URL）
+            </p>
           </div>
         </div>
 

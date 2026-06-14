@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 import auth
 import models
 import schemas
-from ai_service import get_api_balance, request_chinese_translation
+from ai_service import get_api_balance, request_chinese_translation, is_google_translate_config
 from database import SessionLocal, engine, get_db
 from discord_manager import generate_chinese_summary_with_failover, monitor_manager, run_token_check, token_health_manager
 from maintenance import prune_old_logs
@@ -279,8 +279,9 @@ def ai_provider_settings(config: models.SystemConfig, provider: str):
 
 
 async def get_ai_balance_for_provider(config: models.SystemConfig, provider: str):
-    api_key, base_url, _model, provider_name = ai_provider_settings(config, provider)
-    if not api_key or not base_url:
+    api_key, base_url, model, provider_name = ai_provider_settings(config, provider)
+    is_google = is_google_translate_config(api_key, base_url, model)
+    if (not api_key or not base_url) and not is_google:
         raise HTTPException(status_code=400, detail=f"{provider_name} is not configured")
 
     balance, error = await get_api_balance(
@@ -337,7 +338,8 @@ async def test_ai_summary(
     current_admin: models.Admin = Depends(get_current_admin),
 ):
     config = ensure_config(db)
-    if not config.ai_api_key:
+    is_google = is_google_translate_config(config.ai_api_key, config.ai_base_url, config.ai_model)
+    if not config.ai_api_key and not is_google:
         raise HTTPException(status_code=400, detail="AI API Key is not configured")
 
     summary, error, provider, switch_message = await generate_chinese_summary_with_failover(
